@@ -1,0 +1,14 @@
+[Unit]
+Requires=network.target
+After=network.target
+
+[Service]
+WorkingDirectory=/home/server
+ExecStart=/home/server/ngw/env/bin/pserve /home/server/development.ini
+Type=simple
+User=server
+Group=server
+Environment=NEXTGISWEB_CONFIG=/home/server/config.ini
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,225 @@
+- hosts: all
+  tasks: 
+    - name: Install PostgreSQL and PostGIS
+      become: yes
+      apt: 
+        name: 
+        - postgresql
+        - postgresql-contrib
+        - postgresql-12-postgis-3
+        - postgresql-12-postgis-3-scripts
+
+    - name: Install basic programms
+      become: yes
+      apt:
+        name:
+        - python2
+        - python2-dev
+        - python3 
+        - python3-pip 
+        - python3-dev 
+        - python3-psycopg2
+        - virtualenv 
+        - python3-virtualenv
+        - git
+        - curl
+        - g++ 
+        - build-essential 
+        - libssl-dev 
+        - libgdal-dev 
+        - libgeos-dev 
+        - gdal-bin 
+        - gdal-data 
+        - libxml2-dev 
+        - libxslt1-dev 
+        - zlib1g-dev 
+        - libjpeg-turbo8-dev 
+        - nodejs 
+        - postgresql-client 
+        - libmagic-dev
+        state: present
+
+    - name: Install psycopg2
+      pip:
+        name: psycopg2
+
+    - name: cp postgres config
+      become: yes
+      template: 
+        src: templates/pg_hba.j2
+        dest: /etc/postgresql/12/main/pg_hba.conf
+        owner: postgres
+        group: postgres
+        mode: '0640'
+
+    - name: Restart PostgreSQL
+      become: yes
+      service: name=postgresql state=restarted enabled=yes
+
+- hosts: all
+  become: yes
+  become_user: postgres
+  tasks: 
+    - name: Create PostgreSQL user
+      postgresql_user:
+        name: ngw_adm
+        password: '12345678'
+    
+    - name: Create PostgreSQL database
+      postgresql_db:
+        name: dbngw
+        owner: ngw_adm
+        encoding: UTF-8
+
+
+    - name: Restart PostgreSQL
+      become: yes
+      become_user: root
+      service: 
+        name: postgresql
+        state: restarted
+        enabled: yes
+
+- hosts: all
+  tasks:
+    - name: create ext postgis
+      postgresql_ext:
+        name: postgis
+        db: dbngw
+
+    - name: create ext hstore
+      postgresql_ext:
+        name: hstore
+        db: dbngw
+
+    - name: set owner to geometry_columns 
+      postgresql_owner:
+        db: dbngw
+        obj_name: geometry_columns 
+        obj_type: table
+        new_owner: ngw_adm
+
+    - name: set owner to geography_columns 
+      postgresql_owner:
+        db: dbngw
+        obj_name: geography_columns 
+        obj_type: table
+        new_owner: ngw_adm
+        
+    - name: set owner to spatial_ref_sys 
+      postgresql_owner:
+        db: dbngw
+        obj_name: spatial_ref_sys 
+        obj_type: table
+        new_owner: ngw_adm
+
+    - name: Restart PostgreSQL
+      become: yes
+      service: name=postgresql state=restarted enabled=yes
+
+    - name: create directory data
+      file:
+        path: /home/server/ngw/data
+        state: directory
+    - name: create directory upload
+      file:
+        path: /home/server/ngw/upload
+        state: directory
+    - name: create directory files
+      file:
+        path: /home/server/ngw/files
+        state: directory
+
+    - name: create directory nextgisweb
+      file:
+        path: /home/server/ngw/nextgisweb
+        state: directory
+
+    - name: git clone nextgis web
+      become: yes
+      git:
+        repo: 'https://github.com/nextgis/nextgisweb.git'
+        dest: /home/server/ngw/nextgisweb
+        clone: yes
+        version: 3.7.0
+
+    - name: create virtualenv
+      pip:
+        name: bottle
+        virtualenv: /home/server/ngw/env
+        virtualenv_command: virtualenv
+
+    - name: requests
+      pip:
+        name: requests==2.22.0
+        virtualenv: /home/server/ngw/env
+
+    - name: networkx
+      pip:
+        name: networkx==2.5.1
+        virtualenv: /home/server/ngw/env
+        
+    - name: install nextgisweb
+      pip:
+        name: file:///home/server/ngw/nextgisweb/
+        virtualenv: /home/server/ngw/env
+        extra_args: -e
+
+    - name: install mapserver
+      become: yes
+      apt: 
+        name:
+        - python3-mapscript
+
+    - name: compile nextgisweb
+      become: yes
+      command: /home/server/ngw/env/bin/nextgisweb-i18n -p nextgisweb compile 
+
+    - name: cp nextgis config
+      template: 
+        src: templates/config.j2
+        dest: /home/server/config.ini
+        #owner: server
+        #group: server
+        mode: '0664'
+
+    - name: export config
+      become: yes
+      lineinfile: 
+        path: /etc/environment
+        line: 'NEXTGISWEB_CONFIG=/home/server/config.ini'
+
+    - name: export config
+      become: yes
+      shell: echo "export NEXTGISWEB_CONFIG=/home/server/config.ini" >> ~/.bashrc
+
+    - name: init db 
+      shell: /home/server/ngw/env/bin/nextgisweb initialize_db  
+
+    - name: edit pserve conf
+      template: 
+        src: templates/development.j2
+        dest: /home/server/development.ini
+        #owner: server
+        #group: server
+        mode: '0664'
+
+    - name: edit systemd daemon
+      become: yes
+      template:
+        src: templates/ngw-daemon.j2
+        dest: /etc/systemd/system/ngw-pserve.service
+        #owner: server
+        #group: server
+        mode: '0664'
+
+    - name: configure ngw-pserve service
+      become: yes
+      systemd:
+        name: ngw-pserve
+        state: started
+        enabled: yes
+
+     
+      
+      
